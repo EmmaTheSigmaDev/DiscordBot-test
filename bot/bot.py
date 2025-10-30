@@ -1,8 +1,11 @@
 import os
 import asyncio
+import time
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
+from typing import Optional
+from datetime import datetime
 
 # /d:/discordbot/DiscordBot-test/bot/bot.py
 # A simple Discord bot with a DM welcomer and a ticket system.
@@ -13,6 +16,9 @@ from dotenv import load_dotenv
 # Load .env (for local development) and config - adjust as needed
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("DISCORD_TOKEN")  # prefer BOT_TOKEN, fall back to DISCORD_TOKEN
+
+# Track bot start time for uptime command
+START_TIME = time.time()
 TICKET_CATEGORY_NAME = "Tickets"
 TICKET_ROLE_NAME = "Support"      # Role that can see/claim all tickets
 LOG_CHANNEL_NAME = "ticket-logs"  # Optional logs channel; create in your server or bot will create one
@@ -179,6 +185,155 @@ async def help_cmd(ctx: commands.Context):
         "A welcome DM is sent automatically on server join."
     )
     await ctx.send(help_text)
+
+
+def format_duration(seconds: float) -> str:
+    """Format seconds into a human friendly uptime string."""
+    seconds = int(seconds)
+    days, seconds = divmod(seconds, 86400)
+    hours, seconds = divmod(seconds, 3600)
+    minutes, seconds = divmod(seconds, 60)
+    parts = []
+    if days:
+        parts.append(f"{days}d")
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    parts.append(f"{seconds}s")
+    return " ".join(parts)
+
+
+@bot.command(name="ping")
+async def ping(ctx: commands.Context):
+    """Responds with bot websocket latency in ms."""
+    latency = bot.latency * 1000  # seconds -> ms
+    await ctx.send(f"Pong! 🏓 Latency: {latency:.0f}ms")
+
+
+@bot.command(name="uptime")
+async def uptime_cmd(ctx: commands.Context):
+    """Shows how long the bot has been online."""
+    up = time.time() - START_TIME
+    await ctx.send(f"Uptime: {format_duration(up)}")
+
+
+@bot.command(name="userinfo")
+async def userinfo(ctx: commands.Context, member: Optional[discord.Member] = None):
+    """Show information about a user (join date, roles, id)."""
+    member = member or ctx.author
+    embed = discord.Embed(title=f"User info — {member}", colour=discord.Colour.blue(), timestamp=datetime.utcnow())
+    embed.set_thumbnail(url=member.display_avatar.url)
+    embed.add_field(name="ID", value=member.id, inline=True)
+    embed.add_field(name="Top role", value=member.top_role.mention if member.top_role else "None", inline=True)
+    # roles (exclude @everyone)
+    roles = [r.mention for r in member.roles if r != ctx.guild.default_role]
+    embed.add_field(name="Roles", value=", ".join(roles) or "None", inline=False)
+    created = member.created_at.strftime("%Y-%m-%d %H:%M UTC") if member.created_at else "Unknown"
+    joined = member.joined_at.strftime("%Y-%m-%d %H:%M UTC") if member.joined_at else "Unknown"
+    embed.add_field(name="Account created", value=created, inline=True)
+    embed.add_field(name="Joined server", value=joined, inline=True)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="serverinfo")
+async def serverinfo(ctx: commands.Context):
+    """Show basic server stats in an embed."""
+    guild = ctx.guild
+    if guild is None:
+        await ctx.send("This command can only be used in a server.")
+        return
+    embed = discord.Embed(title=f"Server info — {guild.name}", colour=discord.Colour.green(), timestamp=datetime.utcnow())
+    embed.set_thumbnail(url=guild.icon.url if guild.icon else discord.Embed.Empty)
+    embed.add_field(name="ID", value=guild.id, inline=True)
+    embed.add_field(name="Owner", value=guild.owner.mention if guild.owner else str(guild.owner), inline=True)
+    embed.add_field(name="Members", value=guild.member_count, inline=True)
+    text_ch = len(guild.text_channels)
+    voice_ch = len(guild.voice_channels)
+    embed.add_field(name="Channels", value=f"Text: {text_ch}\nVoice: {voice_ch}", inline=True)
+    embed.add_field(name="Roles", value=len(guild.roles), inline=True)
+    created = guild.created_at.strftime("%Y-%m-%d %H:%M UTC") if guild.created_at else "Unknown"
+    embed.add_field(name="Created", value=created, inline=True)
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="kick")
+@commands.has_permissions(kick_members=True)
+async def kick(ctx: commands.Context, member: discord.Member, *, reason: Optional[str] = None):
+    """Kick a member from the server. Requires Kick Members permission."""
+    try:
+        await member.kick(reason=reason)
+        await ctx.send(f"Kicked {member}.")
+        # optional logging
+        log_channel = discord.utils.get(ctx.guild.text_channels, name=LOG_CHANNEL_NAME)
+        if log_channel:
+            await log_channel.send(f"Member kicked: {member} by {ctx.author} ({reason or 'No reason'})")
+    except Exception as e:
+        await ctx.send(f"Failed to kick: {e}")
+
+
+@bot.command(name="ban")
+@commands.has_permissions(ban_members=True)
+async def ban(ctx: commands.Context, member: discord.Member, *, reason: Optional[str] = None):
+    """Ban a member from the server. Requires Ban Members permission."""
+    try:
+        await member.ban(reason=reason)
+        await ctx.send(f"Banned {member}.")
+        log_channel = discord.utils.get(ctx.guild.text_channels, name=LOG_CHANNEL_NAME)
+        if log_channel:
+            await log_channel.send(f"Member banned: {member} by {ctx.author} ({reason or 'No reason'})")
+    except Exception as e:
+        await ctx.send(f"Failed to ban: {e}")
+
+
+@bot.command(name="purge")
+@commands.has_permissions(manage_messages=True)
+async def purge(ctx: commands.Context, amount: int):
+    """Bulk delete messages from the current channel. Usage: !purge <n>"""
+    if amount <= 0:
+        await ctx.send("Please provide a positive number of messages to delete.")
+        return
+    # limit the amount to a reasonable number
+    if amount > 1000:
+        await ctx.send("I can only purge up to 1000 messages at once.")
+        return
+    try:
+        deleted = await ctx.channel.purge(limit=amount + 1)  # include command message
+        await ctx.send(f"Deleted {len(deleted)-1} messages.", delete_after=5)
+        # optional logging
+        log_channel = discord.utils.get(ctx.guild.text_channels, name=LOG_CHANNEL_NAME)
+        if log_channel:
+            await log_channel.send(f"Purged {len(deleted)-1} messages in {ctx.channel.mention} by {ctx.author}.")
+    except Exception as e:
+        await ctx.send(f"Failed to purge messages: {e}")
+
+
+@bot.event
+async def on_message_delete(message: discord.Message):
+    """Auto-log deleted messages to the configured log channel (if present)."""
+    # ignore DMs or system messages
+    if not message.guild:
+        return
+    log_channel = discord.utils.get(message.guild.text_channels, name=LOG_CHANNEL_NAME)
+    if not log_channel:
+        return
+    author = message.author
+    embed = discord.Embed(title="Message deleted", colour=discord.Colour.red(), timestamp=datetime.utcnow())
+    embed.add_field(name="Author", value=f"{author} ({author.id})", inline=True)
+    embed.add_field(name="Channel", value=message.channel.mention, inline=True)
+    content = message.content or "*(no content)*"
+    # truncate long content
+    if len(content) > 1900:
+        content = content[:1900] + "..."
+    embed.add_field(name="Content", value=content, inline=False)
+    if message.attachments:
+        attachment_urls = "\n".join(a.url for a in message.attachments)
+        embed.add_field(name="Attachments", value=attachment_urls, inline=False)
+    try:
+        await log_channel.send(embed=embed)
+    except Exception:
+        # give up silently if logging fails
+        pass
 
 
 if __name__ == "__main__":
