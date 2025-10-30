@@ -7,12 +7,6 @@ from dotenv import load_dotenv
 from typing import Optional
 from datetime import datetime
 
-# /d:/discordbot/DiscordBot-test/bot/bot.py
-# A simple Discord bot with a DM welcomer and a ticket system.
-# Requirements: discord.py v2+ (pip install -U "discord.py")
-# Set your bot token in the BOT_TOKEN environment variable before running.
-
-
 # Load .env (for local development) and config - adjust as needed
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("DISCORD_TOKEN")  # prefer BOT_TOKEN, fall back to DISCORD_TOKEN
