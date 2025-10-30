@@ -145,17 +145,14 @@ async def ticket(ctx: commands.Context, action: str = None):
             def check(m):
                 return m.author == ctx.author and m.channel == channel
 
-            done, pending = await asyncio.wait(
-                [bot.wait_for('message', check=check, timeout=5)],
-                timeout=5
-            )
-            # If a message 'cancel' received, abort
-            if done:
-                msg = list(done)[0].result()
-                if msg.content.lower().strip() == "cancel":
-                    await channel.send("Ticket close canceled.")
-                    return
+            # Await the single wait_for directly. asyncio.wait no longer accepts bare
+            # coroutine objects in recent Python versions; awaiting is simpler here.
+            msg = await bot.wait_for('message', check=check, timeout=5)
+            if msg.content.lower().strip() == "cancel":
+                await channel.send("Ticket close canceled.")
+                return
         except asyncio.TimeoutError:
+            # no cancel message within timeout; continue closing
             pass
 
         # optional: send transcript or notify logs
@@ -163,7 +160,7 @@ async def ticket(ctx: commands.Context, action: str = None):
         if log_channel:
             await log_channel.send(f"Ticket closed: {channel.name} by {ctx.author} ({ctx.author.id})")
 
-        await channel.delete(reason=f"Ticket closed by {ctx.author}")
+        await channel.delete(reason=f"Ticket closed by {ctx.author}") 
 
     else:
         await ctx.send("Unknown ticket action. Use `!ticket create` or `!ticket close`.")
@@ -196,6 +193,24 @@ def format_duration(seconds: float) -> str:
         parts.append(f"{minutes}m")
     parts.append(f"{seconds}s")
     return " ".join(parts)
+
+
+@bot.event
+async def on_ready():
+    """Called when the bot is ready. Sync slash commands."""
+    print(f"Logged in as {bot.user}")
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash commands")
+    except Exception as e:
+        print(f"Error syncing commands: {e}")
+
+
+@bot.tree.command(name="source-code", description="Get a link to this project's source code")
+async def source_code(interaction: discord.Interaction):
+    """Send a clickable link to the project's source repository."""
+    repo_url = "https://github.com/EmmaTheSigmaDev/DiscordBot-test"
+    await interaction.response.send_message(f"Source code: {repo_url}")
 
 
 @bot.command(name="ping")
