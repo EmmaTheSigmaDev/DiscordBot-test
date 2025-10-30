@@ -206,6 +206,43 @@ async def on_ready():
         print(f"Error syncing commands: {e}")
 
 
+@bot.event
+async def on_command_error(ctx: commands.Context, error: Exception):
+    """Global handler for command errors to provide friendlier messages and avoid noisy tracebacks.
+
+    Handles MissingRequiredArgument and MissingPermissions specially, ignores CommandNotFound,
+    and logs other errors while sending a short message to the user.
+    """
+    # Unwrap CommandInvokeError to the original exception where applicable
+    original = getattr(error, 'original', error)
+
+    # Missing required argument (e.g. user ran `!purge` without amount)
+    if isinstance(original, commands.MissingRequiredArgument):
+        param_name = original.param.name if hasattr(original, 'param') else 'argument'
+        cmd = ctx.command
+        sig = f" {cmd.signature}" if cmd and getattr(cmd, 'signature', None) else ""
+        invoked = ctx.invoked_with or (cmd.name if cmd else '')
+        await ctx.send(f"Missing required argument `{param_name}`.\nUsage: `{ctx.prefix}{invoked}{sig}`")
+        return
+
+    # Missing permissions
+    if isinstance(original, commands.MissingPermissions):
+        await ctx.send("You don't have permission to use this command.")
+        return
+
+    # Unknown command -> ignore silently (prevents spam when people try commands that don't exist)
+    if isinstance(original, commands.CommandNotFound):
+        return
+
+    # Fallback: log and notify
+    print(f"Unhandled command error in {ctx.command}: {error}")
+    try:
+        await ctx.send("An unexpected error occurred while running the command.")
+    except Exception:
+        # if sending fails, just print
+        print("Also failed to send error message to channel")
+
+
 @bot.tree.command(name="source-code", description="Get a link to this project's source code")
 async def source_code(interaction: discord.Interaction):
     """Send a clickable link to the project's source repository."""
